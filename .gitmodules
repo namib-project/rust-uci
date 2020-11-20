@@ -1,0 +1,8 @@
+[submodule "libuci-sys/libubox"]
+	path = libuci-sys/libubox
+	url = git://git.openwrt.org/project/libubox.git
+	ignore = all
+[submodule "libuci-sys/uci"]
+	path = libuci-sys/uci
+	url = git://git.openwrt.org/project/uci.git
+	ignore = all

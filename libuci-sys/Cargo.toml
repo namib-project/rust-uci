@@ -1,0 +1,16 @@
+[package]
+name = "libuci-sys"
+version = "1.0.0"
+authors = ["Benjamin Ludewig <ludewig.b@gmail.com>"]
+description = "FFI bindings to UCI"
+license-file = "LICENSE"
+repository = "https://github.com/namib-project/libuci-sys"
+keywords = ["openwrt"]
+categories = ["external-ffi-bindings"]
+build = "build.rs"
+edition = "2018"
+exclude = ["libubox/tests/*", "uci/tests/*"]
+
+[build-dependencies]
+bindgen = "^0.57.0"
+cmake = "^0.1.45"
