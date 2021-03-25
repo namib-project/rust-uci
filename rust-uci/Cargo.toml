@@ -10,6 +10,6 @@ license-file = "LICENSE"
 edition = "2018"
 
 [dependencies]
-libuci-sys = { path = "../libuci-sys" }
+libuci-sys = { version = "1.0.0", path = "../libuci-sys" }
 log = "^0.4.14"
 libc = "^0.2.91"
