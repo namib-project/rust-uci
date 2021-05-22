@@ -1,6 +1,6 @@
 [package]
 name = "libuci-sys"
-version = "1.0.1"
+version = "1.0.5"
 authors = ["Benjamin Ludewig <ludewig.b@gmail.com>"]
 description = "FFI bindings to OpenWRT UCI"
 license = "MIT OR Apache-2.0"
@@ -10,6 +10,9 @@ categories = ["external-ffi-bindings"]
 build = "build.rs"
 edition = "2018"
 exclude = ["libubox/tests/*", "uci/tests/*"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]
 
 [build-dependencies]
 bindgen = "^0.58.1"
