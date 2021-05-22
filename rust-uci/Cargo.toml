@@ -1,15 +1,15 @@
 [package]
 name = "rust-uci"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Benjamin Ludewig <ludewig.b@gmail.com>"]
-description = "UCI bindings"
+description = "OpenWRT UCI rust bindings"
 repository = "https://github.com/namib-project/libuci-sys"
 keywords = ["openwrt"]
 categories = ["api-bindings"]
-license-file = "LICENSE"
+license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [dependencies]
-libuci-sys = { version = "1.0.0", path = "../libuci-sys" }
+libuci-sys = { version = "1.0.1", path = "../libuci-sys" }
 log = "^0.4.14"
 libc = "^0.2.91"

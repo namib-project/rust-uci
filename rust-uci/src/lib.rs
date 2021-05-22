@@ -1,3 +1,51 @@
+// Copyright 2021, Benjamin Ludewig
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! Bindings to OpenWRT UCI
+//!
+//! This crate provides a safe interface to OpenWRT's Unified Configuration Interface C-Library.
+//!
+//! # Building
+//!
+//! Both UCI libraries and headers are required to build this crate. There are multiple options available to locate
+//! UCI.
+//!
+//! ## Inside OpenWRT SDK
+//!
+//! If building inside the OpenWRT SDK with OpenWRT's UCI package set the environment variable
+//! `UCI_DIR=$(STAGING_DIR)/usr` using the corresponding Makefile.
+//! rust-uci will automatically use the headers and libraries for the target system.
+//!
+//! ## Vendored
+//!
+//! If no `UCI_DIR` variable is set, rust-uci will compile against the distributed libuci source files licensed under GPLv2.
+//!
+//! # Example Usage
+//!
+//! ```no_run
+//! use rust_uci::Uci;
+//!
+//! let mut uci = Uci::new()?;
+//! // Get type of a section
+//! assert_eq!(uci.get("network.wan")?, "interface");
+//! // Get value of an option, UCI's extended syntax is supported
+//! assert_eq!(uci.get("network.@interface[0].proto")?, "static");
+//! assert_eq!(uci.get("network.lan.proto")?, "static");
+//!
+//! // Create a new section
+//! uci.set("network.newnet", "interface")?;
+//! uci.set("network.newnet.proto", "static")?;
+//! uci.set("network.newnet.ifname", "en0")?;
+//! uci.set("network.newnet.enabled", "1")?;
+//! uci.set("network.newnet.ipaddr", "2.3.4.5")?;
+//! uci.set("network.newnet.test", "123")?;
+//! uci.delete("network.newnet.test")?;
+//! // IMPORTANT: Commit or revert the changes
+//! uci.commit("network")?;
+//! uci.revert("network")?;
+//!
+//! ```
+
 pub mod error;
 
 use core::ptr;

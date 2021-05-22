@@ -1,3 +1,26 @@
+// Copyright 2021, Benjamin Ludewig
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
+//! FFI bindings to OpenWRT UCI
+//!
+//! This crate provides an unsafe interface to OpenWRT's Unified Configuration Interface C-Library.
+//!
+//! # Building
+//!
+//! Both UCI libraries and headers are required to build this crate. There are multiple options available to locate
+//! UCI.
+//!
+//! ## Inside OpenWRT SDK
+//!
+//! If building inside the OpenWRT SDK with OpenWRT's UCI package set the environment variable
+//! `UCI_DIR=$(STAGING_DIR)/usr` using the corresponding Makefile.
+//! rust-uci will automatically use the headers and libraries for the target system.
+//!
+//! ## Vendored
+//!
+//! If no `UCI_DIR` variable is set, rust-uci will compile against the distributed libuci source files licensed under GPLv2.
+//!
+
 pub use bindings::{
     uci_add_delta_path, uci_add_list, uci_add_section, uci_alloc_context, uci_backend, uci_command,
     uci_commit, uci_context, uci_del_list, uci_delete, uci_delta, uci_element, uci_export,

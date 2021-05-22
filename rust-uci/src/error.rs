@@ -1,3 +1,6 @@
+// Copyright 2021, Benjamin Ludewig
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use std::ffi::NulError;
 use std::fmt::{Debug, Display, Formatter};
 use std::option::Option::None;
