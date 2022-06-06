@@ -15,6 +15,8 @@
 //! If building inside the OpenWRT SDK with OpenWRT's UCI package set the environment variable
 //! `UCI_DIR=$(STAGING_DIR)/usr` using the corresponding Makefile.
 //! rust-uci will automatically use the headers and libraries for the target system.
+//! When crosscompiling it may be useful to set BINDGEN_TARGET to instruct what
+//! target bindgen is built for.
 //!
 //! ## Vendored
 //!
