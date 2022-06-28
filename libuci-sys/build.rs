@@ -17,6 +17,10 @@ fn main() {
     }
 
     let mut builder = bindgen::Builder::default();
+    // if BINDGEN_TARGET is set it instructs the target bindgen is built for
+    if let Ok(bindgen_target) = env::var("BINDGEN_TARGET") {
+        builder = builder.clang_arg(format!("--target={}", bindgen_target));
+    }
 
     // if UCI_DIR is present, use it to look for the header file and precompiled libs
     if let Ok(uci_dir) = env::var("UCI_DIR") {
