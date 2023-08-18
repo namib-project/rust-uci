@@ -56,10 +56,10 @@ use std::{
 };
 
 use libuci_sys::{
-    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_free_context, uci_get_errorstr,
-    uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE,
-    uci_revert, uci_save, uci_set, uci_set_confdir, uci_set_savedir, uci_type_UCI_TYPE_OPTION,
-    uci_type_UCI_TYPE_SECTION, uci_unload,
+    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element, uci_free_context,
+    uci_get_errorstr, uci_list, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING, uci_ptr,
+    uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert, uci_save, uci_set, uci_set_confdir, uci_set_savedir,
+    uci_type_UCI_TYPE_OPTION, uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
 
@@ -308,12 +308,6 @@ impl Uci {
         match last.type_ {
             uci_type_UCI_TYPE_OPTION => {
                 let opt = unsafe { *ptr.o };
-                if opt.type_ != uci_option_type_UCI_TYPE_STRING {
-                    return Err(Error::Message(format!(
-                        "Cannot get string value of non-string: {} {}",
-                        key, opt.type_
-                    )));
-                }
                 if opt.section.is_null() {
                     return Err(Error::Message(format!("uci section was null: {}", key)));
                 }
@@ -322,7 +316,39 @@ impl Uci {
                     return Err(Error::Message(format!("uci package was null: {}", key)));
                 }
                 let pack = unsafe { *sect.package };
-                let value = unsafe { CStr::from_ptr(opt.v.string).to_str()? };
+
+                let mut list_str = String::new();
+                let value = match opt.type_ {
+                    uci_option_type_UCI_TYPE_STRING => unsafe {
+                        CStr::from_ptr(opt.v.string).to_str()?
+                    },
+                    uci_option_type_UCI_TYPE_LIST => {
+                        let mut elem_ptr = unsafe { opt.v.list.next as *const uci_element };
+                        let list_ptr = unsafe { &(*elem_ptr).list as *const uci_list };
+                        let mut sep = false;
+                        loop {
+                            let list_ptr_next = unsafe { (*elem_ptr).list.next as *const uci_list };
+                            if list_ptr_next == list_ptr {
+                                break;
+                            }
+                            let name = unsafe { CStr::from_ptr((*elem_ptr).name).to_str()? };
+                            if sep == true {
+                                list_str.push(' ');
+                            }
+                            list_str.push_str(name);
+                            sep = true;
+
+                            elem_ptr = unsafe { (*elem_ptr).list.next as *const uci_element };
+                        }
+                        &list_str
+                    }
+                    _ => {
+                        return Err(Error::Message(format!(
+                            "Cannot get values of a non-string or a non-list: {} {}",
+                            key, opt.type_
+                        )));
+                    }
+                };
 
                 debug!(
                     "{}.{}.{}={}",
