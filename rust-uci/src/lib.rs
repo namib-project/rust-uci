@@ -52,6 +52,7 @@ pub mod error;
 use core::ptr;
 use std::{
     ffi::{CStr, CString},
+    fmt::Display,
     ops::{Deref, DerefMut},
 };
 
@@ -70,6 +71,25 @@ const UCI_OK: i32 = libuci_sys::UCI_OK as i32;
 
 /// Contains the native `uci_context`
 pub struct Uci(*mut uci_context);
+
+/// A `UciValue` obtained from the get method can be either
+/// a simple string value or a list which is implemented as a vector of string values
+#[derive(Debug, Clone)]
+pub enum UciValue {
+    String(String),
+    List(Vec<String>),
+}
+
+impl Display for UciValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UciValue::String(value) => Display::fmt(value, f),
+            UciValue::List(list) => {
+                write!(f, "{}", list.join(" "))
+            }
+        }
+    }
+}
 
 impl Drop for Uci {
     fn drop(&mut self) {
@@ -298,7 +318,7 @@ impl Uci {
     /// Allowed keys are like `network.wan.proto`, `network.@interface[-1].iface`, `network.lan` and `network.@interface[-1]`
     ///
     /// if the entry does not exist an `Err` is returned.
-    pub fn get(&mut self, key: &str) -> Result<String> {
+    pub fn get(&mut self, key: &str) -> Result<UciValue> {
         let ptr = self.get_ptr(key)?;
         if ptr.flags & uci_ptr_UCI_LOOKUP_COMPLETE == 0 {
             return Err(Error::Message(format!("Lookup failed: {}", key)));
@@ -319,28 +339,25 @@ impl Uci {
 
                 let mut list_str = String::new();
                 let value = match opt.type_ {
-                    uci_option_type_UCI_TYPE_STRING => unsafe {
-                        CStr::from_ptr(opt.v.string).to_str()?
-                    },
+                    uci_option_type_UCI_TYPE_STRING => {
+                        let value = unsafe { String::from(CStr::from_ptr(opt.v.string).to_str()?) };
+                        UciValue::String(value)
+                    }
                     uci_option_type_UCI_TYPE_LIST => {
+                        let mut list = vec![];
                         let mut elem_ptr = unsafe { opt.v.list.next as *const uci_element };
                         let list_ptr = unsafe { &(*elem_ptr).list as *const uci_list };
-                        let mut sep = false;
                         loop {
                             let list_ptr_next = unsafe { (*elem_ptr).list.next as *const uci_list };
                             if list_ptr_next == list_ptr {
                                 break;
                             }
-                            let name = unsafe { CStr::from_ptr((*elem_ptr).name).to_str()? };
-                            if sep == true {
-                                list_str.push(' ');
-                            }
-                            list_str.push_str(name);
-                            sep = true;
-
+                            let list_value =
+                                unsafe { String::from(CStr::from_ptr((*elem_ptr).name).to_str()?) };
+                            list.push(list_value);
                             elem_ptr = unsafe { (*elem_ptr).list.next as *const uci_element };
                         }
-                        &list_str
+                        UciValue::List(list)
                     }
                     _ => {
                         return Err(Error::Message(format!(
@@ -357,7 +374,7 @@ impl Uci {
                     unsafe { CStr::from_ptr(opt.e.name) }.to_str()?,
                     value
                 );
-                Ok(String::from(value))
+                Ok(value)
             }
             uci_type_UCI_TYPE_SECTION => {
                 let sect = unsafe { *ptr.s };
@@ -373,7 +390,7 @@ impl Uci {
                     unsafe { CStr::from_ptr(sect.e.name) }.to_str()?,
                     typ
                 );
-                Ok(String::from(typ))
+                Ok(UciValue::String(String::from(typ)))
             }
             _ => return Err(Error::Message(format!("unsupported type: {}", last.type_))),
         }
