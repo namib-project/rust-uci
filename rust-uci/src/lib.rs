@@ -50,11 +50,6 @@
 pub mod error;
 
 use core::ptr;
-use std::{
-    ffi::{CStr, CString},
-    ops::{Deref, DerefMut},
-};
-
 use libuci_sys::{
     uci_alloc_context, uci_commit, uci_context, uci_delete, uci_free_context, uci_get_errorstr,
     uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE,
@@ -62,18 +57,66 @@ use libuci_sys::{
     uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
+use std::sync::Mutex;
+use std::{
+    ffi::{CStr, CString},
+    ops::{Deref, DerefMut},
+};
 
 use crate::error::{Error, Result};
 
 #[allow(clippy::cast_possible_wrap)]
 const UCI_OK: i32 = libuci_sys::UCI_OK as i32;
 
+// Global lock to ensure that only one instance of libuci function calls is running at the time.
+// Necessary because libuci uses thread-unsafe functions with global state (e.g., strtok).
+static LIBRARY_LOCK: Mutex<()> = Mutex::new(());
+
+// Ensures that the global library lock is held while evaluating `$call`.
+// The second parameter indicates whether a check for reentrancy should be performed, and requires
+// `self` to be a mutable borrow of a `Uci` instance.
+macro_rules! libuci_locked {
+    ($self:ident, $call:expr) => {{
+        // Lock global library mutex, if we aren't already holding it in a function call higher up
+        // in the stack.
+        let libuci_lock_guard = if !$self.lock_held {
+            let libuci_lock_guard = Some(
+                LIBRARY_LOCK
+                    .lock()
+                    .expect("global libuci library lock was poisoned."),
+            );
+            $self.lock_held = true;
+            libuci_lock_guard
+        } else {
+            None
+        };
+        let result = $call;
+        // If we were the ones who locked the global library lock, release it.
+        if let Some(libuci_lock_guard) = libuci_lock_guard {
+            $self.lock_held = false;
+            drop(libuci_lock_guard);
+        }
+        result
+    }};
+    ($call:expr) => {{
+        let _libuci_lock_guard = Some(
+            LIBRARY_LOCK
+                .lock()
+                .expect("global libuci library lock was poisoned."),
+        );
+        $call
+    }};
+}
+
 /// Contains the native `uci_context`
-pub struct Uci(*mut uci_context);
+pub struct Uci {
+    ctx: *mut uci_context,
+    lock_held: bool,
+}
 
 impl Drop for Uci {
     fn drop(&mut self) {
-        unsafe { uci_free_context(self.0) }
+        libuci_locked!(self, unsafe { uci_free_context(self.ctx) })
     }
 }
 
@@ -105,9 +148,12 @@ impl Uci {
     /// Creates a new UCI context.
     /// The C memory will be freed when the object is dropped.
     pub fn new() -> Result<Uci> {
-        let ctx = unsafe { uci_alloc_context() };
+        let ctx = libuci_locked!(unsafe { uci_alloc_context() });
         if !ctx.is_null() {
-            Ok(Uci(ctx))
+            Ok(Uci {
+                ctx,
+                lock_held: false,
+            })
         } else {
             Err(Error::Message(String::from("Could not alloc uci context")))
         }
@@ -115,50 +161,54 @@ impl Uci {
 
     /// Sets the config directory of UCI, this is `/etc/config` by default.
     pub fn set_config_dir(&mut self, config_dir: &str) -> Result<()> {
-        let result = unsafe {
-            let raw = CString::new(config_dir)?;
-            uci_set_confdir(
-                self.0,
-                raw.as_bytes_with_nul()
-                    .as_ptr()
-                    .cast::<std::os::raw::c_char>(),
-            )
-        };
-        if result == UCI_OK {
-            debug!("Set config dir to: {}", config_dir);
-            Ok(())
-        } else {
-            Err(Error::Message(format!(
-                "Cannot set config dir: {}, {}",
-                config_dir,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )))
-        }
+        libuci_locked!(self, {
+            let result = unsafe {
+                let raw = CString::new(config_dir)?;
+                uci_set_confdir(
+                    self.ctx,
+                    raw.as_bytes_with_nul()
+                        .as_ptr()
+                        .cast::<std::os::raw::c_char>(),
+                )
+            };
+            if result == UCI_OK {
+                debug!("Set config dir to: {}", config_dir);
+                Ok(())
+            } else {
+                Err(Error::Message(format!(
+                    "Cannot set config dir: {}, {}",
+                    config_dir,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )))
+            }
+        })
     }
 
     /// Sets the save directory of UCI, this is `/tmp/.uci` by default.
     pub fn set_save_dir(&mut self, save_dir: &str) -> Result<()> {
-        let result = unsafe {
-            let raw = CString::new(save_dir)?;
-            uci_set_savedir(
-                self.0,
-                raw.as_bytes_with_nul()
-                    .as_ptr()
-                    .cast::<std::os::raw::c_char>(),
-            )
-        };
-        if result == UCI_OK {
-            debug!("Set save dir to: {}", save_dir);
-            Ok(())
-        } else {
-            Err(Error::Message(format!(
-                "Cannot set save dir: {}, {}",
-                save_dir,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )))
-        }
+        let raw = CString::new(save_dir)?;
+        libuci_locked!(self, {
+            let result = unsafe {
+                uci_set_savedir(
+                    self.ctx,
+                    raw.as_bytes_with_nul()
+                        .as_ptr()
+                        .cast::<std::os::raw::c_char>(),
+                )
+            };
+            if result == UCI_OK {
+                debug!("Set save dir to: {}", save_dir);
+                Ok(())
+            } else {
+                Err(Error::Message(format!(
+                    "Cannot set save dir: {}, {}",
+                    save_dir,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )))
+            }
+        })
     }
 
     /// Delete an option or section in UCI.
@@ -169,28 +219,30 @@ impl Uci {
     /// if the deletion failed an `Err` is returned.
     pub fn delete(&mut self, identifier: &str) -> Result<()> {
         let mut ptr = self.get_ptr(identifier)?;
-        let result = unsafe { uci_delete(self.0, &mut ptr.0) };
-        if result != UCI_OK {
-            return Err(Error::Message(format!(
-                "Could not delete uci key: {}, {}, {}",
-                identifier,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )));
-        }
-        let result = unsafe { uci_save(self.0, ptr.p) };
-        if result == UCI_OK {
-            Ok(())
-        } else {
-            Err(Error::Message(format!(
-                "Could not save uci key: {}, {}, {}",
-                identifier,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )))
-        }
+        libuci_locked!(self, {
+            let result = unsafe { uci_delete(self.ctx, &mut ptr.0) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not delete uci key: {}, {}, {}",
+                    identifier,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
+            }
+            let result = unsafe { uci_save(self.ctx, ptr.p) };
+            if result == UCI_OK {
+                Ok(())
+            } else {
+                Err(Error::Message(format!(
+                    "Could not save uci key: {}, {}, {}",
+                    identifier,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )))
+            }
+        })
     }
 
     /// Revert changes to an option, section or package
@@ -199,29 +251,31 @@ impl Uci {
     ///
     /// if the deletion failed an `Err` is returned.
     pub fn revert(&mut self, identifier: &str) -> Result<()> {
-        let mut ptr = self.get_ptr(identifier)?;
-        let result = unsafe { uci_revert(self.0, &mut ptr.0) };
-        if result != UCI_OK {
-            return Err(Error::Message(format!(
-                "Could not revert uci key: {}, {}, {}",
-                identifier,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )));
-        }
-        let result = unsafe { uci_save(self.0, ptr.p) };
-        if result == UCI_OK {
-            Ok(())
-        } else {
-            Err(Error::Message(format!(
-                "Could not save uci key: {}, {}, {}",
-                identifier,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )))
-        }
+        libuci_locked!(self, {
+            let mut ptr = self.get_ptr(identifier)?;
+            let result = unsafe { uci_revert(self.ctx, &mut ptr.0) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not revert uci key: {}, {}, {}",
+                    identifier,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
+            }
+            let result = unsafe { uci_save(self.ctx, ptr.p) };
+            if result == UCI_OK {
+                Ok(())
+            } else {
+                Err(Error::Message(format!(
+                    "Could not save uci key: {}, {}, {}",
+                    identifier,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )))
+            }
+        })
     }
 
     /// Sets an option value or section type in UCI, creates the key if necessary.
@@ -237,59 +291,63 @@ impl Uci {
                 identifier, val
             )));
         }
-        let mut ptr = self.get_ptr(format!("{}={}", identifier, val).as_ref())?;
-        if ptr.value.is_null() {
-            return Err(Error::Message(format!(
-                "parsed value is null: {}={}",
-                identifier, val
-            )));
-        }
-        let result = unsafe { uci_set(self.0, &mut ptr.0) };
-        if result != UCI_OK {
-            return Err(Error::Message(format!(
-                "Could not set uci key: {}={}, {}, {}",
-                identifier,
-                val,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )));
-        }
-        let result = unsafe { uci_save(self.0, ptr.p) };
-        if result == UCI_OK {
-            Ok(())
-        } else {
-            Err(Error::Message(format!(
-                "Could not save uci key: {}={}, {}, {}",
-                identifier,
-                val,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )))
-        }
+        libuci_locked!(self, {
+            let mut ptr = self.get_ptr(format!("{}={}", identifier, val).as_ref())?;
+            if ptr.value.is_null() {
+                return Err(Error::Message(format!(
+                    "parsed value is null: {}={}",
+                    identifier, val
+                )));
+            }
+            let result = unsafe { uci_set(self.ctx, &mut ptr.0) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not set uci key: {}={}, {}, {}",
+                    identifier,
+                    val,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
+            }
+            let result = unsafe { uci_save(self.ctx, ptr.p) };
+            if result == UCI_OK {
+                Ok(())
+            } else {
+                Err(Error::Message(format!(
+                    "Could not save uci key: {}={}, {}, {}",
+                    identifier,
+                    val,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )))
+            }
+        })
     }
 
     /// Commit all changes to the specified package
     /// writing the temporary delta to the config file
     pub fn commit(&mut self, package: &str) -> Result<()> {
-        let mut ptr = self.get_ptr(package)?;
-        let result = unsafe { uci_commit(self.0, &mut ptr.p, false) };
-        if result != UCI_OK {
-            return Err(Error::Message(format!(
-                "Could not set commit uci package: {}, {}, {}",
-                package,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )));
-        }
-        if !ptr.p.is_null() {
-            unsafe {
-                uci_unload(self.0, ptr.p);
+        libuci_locked!(self, {
+            let mut ptr = self.get_ptr(package)?;
+            let result = unsafe { uci_commit(self.ctx, &mut ptr.p, false) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not set commit uci package: {}, {}, {}",
+                    package,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
             }
-        }
-        Ok(())
+            if !ptr.p.is_null() {
+                unsafe {
+                    uci_unload(self.ctx, ptr.p);
+                }
+            }
+            Ok(())
+        })
     }
 
     /// Queries an option value or section type from UCI.
@@ -299,7 +357,7 @@ impl Uci {
     ///
     /// if the entry does not exist an `Err` is returned.
     pub fn get(&mut self, key: &str) -> Result<String> {
-        let ptr = self.get_ptr(key)?;
+        let ptr = libuci_locked!(self, { self.get_ptr(key)? });
         if ptr.flags & uci_ptr_UCI_LOOKUP_COMPLETE == 0 {
             return Err(Error::Message(format!("Lookup failed: {}", key)));
         }
@@ -375,17 +433,20 @@ impl Uci {
             option: ptr::null(),
             value: ptr::null(),
         };
-        let raw = CString::new(identifier)?.into_raw();
-        let result = unsafe { uci_lookup_ptr(self.0, &mut ptr, raw, true) };
-        if result != UCI_OK {
-            return Err(Error::Message(format!(
-                "Could not parse uci key: {}, {}, {}",
-                identifier,
-                result,
-                self.get_last_error()
-                    .unwrap_or_else(|_| String::from("Unknown"))
-            )));
-        }
+        let raw = libuci_locked!(self, {
+            let raw = CString::new(identifier)?.into_raw();
+            let result = unsafe { uci_lookup_ptr(self.ctx, &mut ptr, raw, true) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not parse uci key: {}, {}, {}",
+                    identifier,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
+            }
+            raw
+        });
         debug!("{:?}", ptr);
         if !ptr.last.is_null() {
             Ok(UciPtr(ptr, raw))
@@ -401,7 +462,9 @@ impl Uci {
     /// if no `last_error` is set, an `Err` is returned.
     fn get_last_error(&mut self) -> Result<String> {
         let mut raw: *mut std::os::raw::c_char = ptr::null_mut();
-        unsafe { uci_get_errorstr(self.0, &mut raw, ptr::null()) };
+        libuci_locked!(self, {
+            unsafe { uci_get_errorstr(self.ctx, &mut raw, ptr::null()) }
+        });
         if raw.is_null() {
             return Err(Error::Message(String::from("last_error was null")));
         }
