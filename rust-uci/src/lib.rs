@@ -51,15 +51,16 @@ pub mod error;
 
 use core::ptr;
 use libuci_sys::{
-    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_free_context, uci_get_errorstr,
-    uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE,
-    uci_revert, uci_save, uci_set, uci_set_confdir, uci_set_savedir, uci_type_UCI_TYPE_OPTION,
-    uci_type_UCI_TYPE_SECTION, uci_unload,
+    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element, uci_free_context,
+    uci_get_errorstr, uci_list, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING, uci_ptr,
+    uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert, uci_save, uci_set, uci_set_confdir, uci_set_savedir,
+    uci_type_UCI_TYPE_OPTION, uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
 use std::sync::Mutex;
 use std::{
     ffi::{CStr, CString},
+    fmt::Display,
     ops::{Deref, DerefMut},
 };
 
@@ -112,6 +113,25 @@ macro_rules! libuci_locked {
 pub struct Uci {
     ctx: *mut uci_context,
     lock_held: bool,
+}
+
+/// A `UciValue` obtained from the get method can be either
+/// a simple string value or a list which is implemented as a vector of string values
+#[derive(Debug, Clone)]
+pub enum UciValue {
+    String(String),
+    List(Vec<String>),
+}
+
+impl Display for UciValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UciValue::String(value) => Display::fmt(value, f),
+            UciValue::List(list) => {
+                write!(f, "{}", list.join(" "))
+            }
+        }
+    }
 }
 
 impl Drop for Uci {
@@ -356,7 +376,7 @@ impl Uci {
     /// Allowed keys are like `network.wan.proto`, `network.@interface[-1].iface`, `network.lan` and `network.@interface[-1]`
     ///
     /// if the entry does not exist an `Err` is returned.
-    pub fn get(&mut self, key: &str) -> Result<String> {
+    pub fn get(&mut self, key: &str) -> Result<UciValue> {
         let ptr = libuci_locked!(self, { self.get_ptr(key)? });
         if ptr.flags & uci_ptr_UCI_LOOKUP_COMPLETE == 0 {
             return Err(Error::Message(format!("Lookup failed: {}", key)));
@@ -366,12 +386,6 @@ impl Uci {
         match last.type_ {
             uci_type_UCI_TYPE_OPTION => {
                 let opt = unsafe { *ptr.o };
-                if opt.type_ != uci_option_type_UCI_TYPE_STRING {
-                    return Err(Error::Message(format!(
-                        "Cannot get string value of non-string: {} {}",
-                        key, opt.type_
-                    )));
-                }
                 if opt.section.is_null() {
                     return Err(Error::Message(format!("uci section was null: {}", key)));
                 }
@@ -380,7 +394,36 @@ impl Uci {
                     return Err(Error::Message(format!("uci package was null: {}", key)));
                 }
                 let pack = unsafe { *sect.package };
-                let value = unsafe { CStr::from_ptr(opt.v.string).to_str()? };
+
+                let mut list_str = String::new();
+                let value = match opt.type_ {
+                    uci_option_type_UCI_TYPE_STRING => {
+                        let value = unsafe { String::from(CStr::from_ptr(opt.v.string).to_str()?) };
+                        UciValue::String(value)
+                    }
+                    uci_option_type_UCI_TYPE_LIST => {
+                        let mut list = vec![];
+                        let mut elem_ptr = unsafe { opt.v.list.next as *const uci_element };
+                        let list_ptr = unsafe { &(*elem_ptr).list as *const uci_list };
+                        loop {
+                            let list_ptr_next = unsafe { (*elem_ptr).list.next as *const uci_list };
+                            if list_ptr_next == list_ptr {
+                                break;
+                            }
+                            let list_value =
+                                unsafe { String::from(CStr::from_ptr((*elem_ptr).name).to_str()?) };
+                            list.push(list_value);
+                            elem_ptr = unsafe { (*elem_ptr).list.next as *const uci_element };
+                        }
+                        UciValue::List(list)
+                    }
+                    _ => {
+                        return Err(Error::Message(format!(
+                            "Cannot get values of a non-string or a non-list: {} {}",
+                            key, opt.type_
+                        )));
+                    }
+                };
 
                 debug!(
                     "{}.{}.{}={}",
@@ -389,7 +432,7 @@ impl Uci {
                     unsafe { CStr::from_ptr(opt.e.name) }.to_str()?,
                     value
                 );
-                Ok(String::from(value))
+                Ok(value)
             }
             uci_type_UCI_TYPE_SECTION => {
                 let sect = unsafe { *ptr.s };
@@ -405,7 +448,7 @@ impl Uci {
                     unsafe { CStr::from_ptr(sect.e.name) }.to_str()?,
                     typ
                 );
-                Ok(String::from(typ))
+                Ok(UciValue::String(String::from(typ)))
             }
             _ => return Err(Error::Message(format!("unsupported type: {}", last.type_))),
         }
