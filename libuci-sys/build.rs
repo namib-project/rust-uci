@@ -31,6 +31,8 @@ fn main() {
         let libubox = cmake::Config::new("libubox")
             .define("BUILD_LUA", "OFF")
             .define("BUILD_EXAMPLES", "OFF")
+            // Required to build with newer CMake versions (e.g., on Arch Linux)
+            .env("CMAKE_POLICY_VERSION_MINIMUM", "3.5")
             .build();
         let libuci = cmake::Config::new("uci")
             .define("BUILD_LUA", "OFF")
