@@ -141,7 +141,7 @@ impl DerefMut for UciPtr {
 
 impl Drop for UciPtr {
     fn drop(&mut self) {
-        unsafe { CString::from_raw(self.1) };
+        drop(unsafe { CString::from_raw(self.1) });
     }
 }
 
@@ -411,7 +411,7 @@ impl Uci {
                 );
                 Ok(String::from(typ))
             }
-            _ => return Err(Error::Message(format!("unsupported type: {}", last.type_))),
+            _ => Err(Error::Message(format!("unsupported type: {}", last.type_))),
         }
     }
 
