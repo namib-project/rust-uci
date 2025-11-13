@@ -363,7 +363,9 @@ impl Uci {
     pub fn get(&mut self, key: &str) -> Result<String> {
         let ptr = libuci_locked!(self, { self.get_ptr(key)? });
         if ptr.flags & uci_ptr_UCI_LOOKUP_COMPLETE == 0 {
-            return Err(Error::Message(format!("Lookup failed: {}", key)));
+            return Err(Error::EntryNotFound {
+                entry_identifier: key.into(),
+            });
         }
         let last = unsafe { *ptr.last };
         #[allow(non_upper_case_globals)]
