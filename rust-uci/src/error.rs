@@ -7,7 +7,7 @@ use std::str::Utf8Error;
 
 use thiserror::Error;
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, PartialEq)]
 pub enum Error {
     #[error("{0}")]
     Message(String),
@@ -15,9 +15,9 @@ pub enum Error {
     Utf8Error(#[from] Utf8Error),
     #[error("{0}")]
     NulError(#[from] NulError),
-    /// uci was unable to find the entry for `entry_identifyer`, e.g. during `uci.get()`
-    #[error("Entry not found: {entry_identifyer}")]
-    EntryNotFound { entry_identifyer: String },
+    /// uci was unable to find the entry for `entry_identifier`, e.g. during `uci.get()`
+    #[error("Entry not found: {entry_identifier}")]
+    EntryNotFound { entry_identifier: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

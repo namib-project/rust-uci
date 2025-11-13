@@ -236,7 +236,7 @@ impl Uci {
             match result {
                 UCI_OK => Ok(()),
                 UCI_ERR_NOTFOUND => Err(Error::EntryNotFound {
-                    entry_identifyer: identifier.to_string(),
+                    entry_identifier: identifier.to_string(),
                 }),
                 _ => Err(Error::Message(format!(
                     "Could not save uci key: {}, {}, {}",
@@ -444,7 +444,7 @@ impl Uci {
                 UCI_OK => (),
                 UCI_ERR_NOTFOUND => {
                     return Err(Error::EntryNotFound {
-                        entry_identifyer: identifier.to_string(),
+                        entry_identifier: identifier.to_string(),
                     });
                 }
                 _ => {
