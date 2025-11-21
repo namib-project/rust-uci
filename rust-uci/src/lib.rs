@@ -120,6 +120,22 @@ impl Drop for Uci {
     }
 }
 
+/// # Safety
+///
+/// It is safe to implement [`Sync`] for [`Uci`], because:
+/// - [`Uci`] does not provide any interior mutability. All methods require a `&mut` reference
+/// - furthermore: each access to `libuci` is synchronized via a global mutex
+unsafe impl Sync for Uci {}
+
+/// # Safety
+///
+/// [`Uci`] is not [`Send`] by default, because it holds a `*mut` raw pointer to [`uci_context`].
+///
+/// It is safe to implement [`Send`] for [`Uci`], because:
+/// - [`uci_context`] does not carry any thread-local data across subsequent calls to `libuci`.
+/// - [`uci_context`] can be freed safely from another thread.
+unsafe impl Send for Uci {}
+
 /// Contains the native `uci_ptr` and it's raw `CString` key
 /// this is done so the raw `CString` stays alive until the `uci_ptr` is dropped
 struct UciPtr(uci_ptr, *mut std::os::raw::c_char);
