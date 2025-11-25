@@ -51,12 +51,14 @@ pub mod error;
 
 use core::ptr;
 use libuci_sys::{
-    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_free_context, uci_get_errorstr,
-    uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE,
-    uci_revert, uci_save, uci_set, uci_set_confdir, uci_set_savedir, uci_type_UCI_TYPE_OPTION,
+    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element, uci_foreach_element,
+    uci_free_context, uci_get_errorstr, uci_load, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING,
+    uci_package, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert, uci_save, uci_set,
+    uci_set_confdir, uci_set_savedir, uci_to_section, uci_type_UCI_TYPE_OPTION,
     uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
+use std::str::FromStr;
 use std::sync::Mutex;
 use std::{
     ffi::{CStr, CString},
@@ -458,6 +460,49 @@ impl Uci {
         }
     }
 
+    /// Queries all sections in a package from UCI.
+    /// If a package has been changed in the delta, the updated value will be returned.
+    ///
+    /// Package values are like `network`, `wireless`, `dropbear`,...
+    ///
+    /// If the package does not exist, an `Err` is returned.
+    pub fn get_sections(&mut self, package: impl AsRef<str>) -> Result<Vec<String>> {
+        let ptr = self.get_ptr(package.as_ref())?;
+        let pkg: *mut uci_package = ptr.p;
+        if pkg.is_null() {
+            return Err(Error::Message(format!(
+                "unable to load package {}",
+                package.as_ref()
+            )));
+        }
+
+        let mut sections = vec![];
+        unsafe {
+            // safety: - pkg is not null
+            //         - The pkg->sections list is not mutated during iteration.
+            //         - Each list entry in enclosed in an uci_element struct.
+            uci_foreach_element(&(*pkg).sections, |elem_ptr: *const uci_element| {
+                if elem_ptr.is_null() {
+                    return;
+                }
+                // safety: the we iterate over pkg->sections, so all elements are contained in a section
+                let section = uci_to_section(elem_ptr);
+
+                // safety: elem_ptr is not null, so section is not null
+                let sec_name = (*section).e.name;
+                if sec_name.is_null() {
+                    return;
+                }
+                // safety: - sec_name is not null
+                //         - we have to trust that libuci only assigns valid C-strings, which are nul-terminated
+                if let Ok(sec_str) = CStr::from_ptr(sec_name).to_str() {
+                    sections.push(sec_str.to_string());
+                }
+            })
+        };
+        Ok(sections)
+    }
+
     /// Obtains the most recent error from UCI as a string
     /// if no `last_error` is set, an `Err` is returned.
     fn get_last_error(&mut self) -> Result<String> {
@@ -479,5 +524,92 @@ impl Uci {
                 Err(e.into())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tempfile::{tempdir, TempDir};
+
+    use super::*;
+    fn setup_uci() -> Result<(Uci, TempDir)> {
+        let mut uci = Uci::new()?;
+        let tmp = tempdir().unwrap();
+        let config_dir = tmp.path().join("config");
+        let save_dir = tmp.path().join("save");
+
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::create_dir_all(&save_dir).unwrap();
+
+        uci.set_config_dir(config_dir.as_os_str().to_str().unwrap())?;
+        uci.set_save_dir(save_dir.as_os_str().to_str().unwrap())?;
+        Ok((uci, tmp))
+    }
+
+    #[test]
+    fn list_wifi_sections_empty_list() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let wireless_config_path = tmp.path().join("config/wireless");
+        std::fs::write(&wireless_config_path, "").unwrap();
+
+        let sections = uci.get_sections("wireless").unwrap();
+        assert_eq!(sections, Vec::<String>::new());
+    }
+
+    #[test]
+    fn list_wifi_sections_two_named_elements() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let wireless_config_path = tmp.path().join("config/wireless");
+        std::fs::write(
+            &wireless_config_path,
+            "
+            config wifi-device 'pdev0'
+                    option channel 'auto'
+
+            config wifi-iface 'wifi0'
+                    option device 'pdev0'
+            ",
+        )
+        .unwrap();
+
+        let sections = uci.get_sections("wireless").unwrap();
+        assert_eq!(sections, ["pdev0", "wifi0"]);
+    }
+
+    #[test]
+    fn list_wifi_sections_named_and_unnamed_elements() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let wireless_config_path = tmp.path().join("config/wireless");
+        std::fs::write(
+            &wireless_config_path,
+            "
+            config wifi-device 'pdev0'
+                    option channel 'auto'
+
+            config wifi-iface 'wifi0'
+                    option device 'pdev0'
+
+            config wifi-iface
+                    option device 'pdev0'
+            ",
+        )
+        .unwrap();
+
+        let sections = uci.get_sections("wireless").unwrap();
+        assert_eq!(sections, ["pdev0", "wifi0", "cfg033579"]);
+    }
+
+    #[test]
+    fn list_sections_of_nonexistent_package() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let wireless_config_path = tmp.path().join("config/wireless");
+        std::fs::write(&wireless_config_path, "").unwrap();
+
+        let sections = uci.get_sections("network");
+        // todo: refactor to assert_eq, once PartialEq is implemented on Error
+        println!("{sections:?}");
+        assert!(
+            matches!(sections, Err(Error::Message(str)) if str == "Could not parse uci key: network, 3, Entry not found")
+        );
     }
 }
