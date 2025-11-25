@@ -75,3 +75,148 @@ mod bindings {
         }
     }
 }
+
+/// Casts a pointer `ptr` of a struct `container` member to the containing struct pointer.
+///
+/// # Safety
+/// The caller must ensure that `$container.$field` has the same type as `$ptr` points to.
+macro_rules! container_of {
+    ($ptr:expr, $container:ty, $field:ident) => {{
+        $ptr.cast::<u8>()
+            .wrapping_sub(std::mem::offset_of!($container, $field))
+            .cast::<$container>()
+    }};
+}
+
+/// casts an uci_list pointer to the containing uci_element.
+///
+/// # Safety
+/// The caller must ensure that `ptr` points to a list which is member of an uci_element.
+/// The `ptr` must not point to a list which is not contained in an uci_element.
+pub unsafe fn list_to_element(ptr: *const uci_list) -> *const uci_element {
+    // safety: uci_element.list has type uci_list, ptr points to uci_list
+    container_of!(ptr, uci_element, list)
+}
+
+/// casts an [`uci_element`] pointer to the containing [`uci_section`].
+///
+/// # Safety
+/// The caller must ensure that `ptr` points to an element which is member of an [`uci_section`].
+/// The `ptr` must not point to an element which is not contained in an uci_element.
+pub unsafe fn uci_to_section(ptr: *const uci_element) -> *const uci_section {
+    // safety: uci_section.e has type uci_element, ptr points to uci_element
+    container_of!(ptr, uci_section, e)
+}
+
+/// mimics the C-macro `uci_foreach_element`
+///
+/// Note: the list head is not considered as a data node, and is skipped during iteration.
+///
+/// # Safety
+/// The caller must ensure, that list points to a valid uci_list,
+/// where each element is contained in a [`uci_element`] struct,
+/// except for the list head.
+///
+/// The caller must not mutate the list during iteration (e.g. via `func`).
+pub unsafe fn uci_foreach_element(list: *const uci_list, mut func: impl FnMut(*const uci_element)) {
+    if list.is_null() {
+        return;
+    }
+
+    let mut node = (*list).next;
+    while !node.is_null() && node.cast_const() != list {
+        let element = list_to_element(node.cast_const());
+        func(element);
+        node = (*node).next;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ptr;
+
+    use crate::{
+        list_to_element, uci_element, uci_foreach_element, uci_list, uci_section, uci_to_section,
+    };
+
+    #[test]
+    fn list_to_element_succeeds() {
+        let elem = uci_element {
+            list: uci_list {
+                next: ptr::null_mut(),
+                prev: ptr::null_mut(),
+            },
+            type_: 0,
+            name: ptr::null_mut(),
+        };
+
+        assert_eq!(&raw const elem, unsafe {
+            list_to_element(&raw const elem.list)
+        });
+    }
+
+    #[test]
+    fn uci_to_section_succeeds() {
+        let section = uci_section {
+            e: uci_element {
+                list: uci_list {
+                    next: ptr::null_mut(),
+                    prev: ptr::null_mut(),
+                },
+                type_: 42,
+                name: ptr::null_mut(),
+            },
+            options: uci_list {
+                next: ptr::null_mut(),
+                prev: ptr::null_mut(),
+            },
+            package: ptr::null_mut(),
+            anonymous: false,
+            type_: ptr::null_mut(),
+        };
+
+        assert_eq!(&raw const section, unsafe {
+            uci_to_section(&raw const section.e)
+        });
+    }
+    #[test]
+    fn uci_foreach_element_succeeds() {
+        let mut head = uci_list {
+            next: ptr::null_mut(),
+            prev: ptr::null_mut(),
+        };
+        let mut e1 = uci_element {
+            list: uci_list {
+                prev: ptr::null_mut(),
+                next: ptr::null_mut(),
+            },
+            type_: 0,
+            name: ptr::null_mut(),
+        };
+        let mut e2 = e1;
+        let mut e3 = e2;
+
+        head.next = &raw mut e1.list;
+        head.prev = &raw mut e3.list;
+
+        e1.list.prev = &raw mut head;
+        e1.list.next = &raw mut e2.list;
+        e1.type_ = 1;
+
+        e2.list.prev = &raw mut e1.list;
+        e2.list.next = &raw mut e3.list;
+        e2.type_ = 2;
+
+        e3.list.prev = &raw mut e2.list;
+        e3.list.next = &raw mut head;
+        e3.type_ = 3;
+
+        let mut visited = vec![];
+        unsafe {
+            uci_foreach_element(&raw const head, |e: *const uci_element| {
+                visited.push((*e).type_);
+            })
+        };
+        assert_eq!(visited, [1, 2, 3]);
+    }
+}
