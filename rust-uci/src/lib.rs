@@ -57,6 +57,7 @@ use libuci_sys::{
     uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
+use std::ffi::c_int;
 use std::sync::Mutex;
 use std::{
     ffi::{CStr, CString},
@@ -65,8 +66,8 @@ use std::{
 
 use crate::error::{Error, Result};
 
-#[allow(clippy::cast_possible_wrap)]
-const UCI_OK: i32 = libuci_sys::UCI_OK as i32;
+const UCI_OK: c_int = libuci_sys::UCI_OK as c_int;
+const UCI_ERR_NOTFOUND: c_int = libuci_sys::UCI_ERR_NOTFOUND as c_int;
 
 // Global lock to ensure that only one instance of libuci function calls is running at the time.
 // Necessary because libuci uses thread-unsafe functions with global state (e.g., strtok).
@@ -140,7 +141,7 @@ impl DerefMut for UciPtr {
 
 impl Drop for UciPtr {
     fn drop(&mut self) {
-        unsafe { CString::from_raw(self.1) };
+        drop(unsafe { CString::from_raw(self.1) });
     }
 }
 
@@ -216,7 +217,8 @@ impl Uci {
     ///
     /// Allowed keys are like `network.wan.proto`, `network.@interface[-1].iface`, `network.wan` and `network.@interface[-1]`
     ///
-    /// if the deletion failed an `Err` is returned.
+    /// If the deletion failed an `Err` is returned.
+    /// If the entry does not exist before deletion, an `Err` with [`Error::EntryNotFound`] is returned.
     pub fn delete(&mut self, identifier: &str) -> Result<()> {
         let mut ptr = self.get_ptr(identifier)?;
         libuci_locked!(self, {
@@ -231,16 +233,18 @@ impl Uci {
                 )));
             }
             let result = unsafe { uci_save(self.ctx, ptr.p) };
-            if result == UCI_OK {
-                Ok(())
-            } else {
-                Err(Error::Message(format!(
+            match result {
+                UCI_OK => Ok(()),
+                UCI_ERR_NOTFOUND => Err(Error::EntryNotFound {
+                    entry_identifier: identifier.to_string(),
+                }),
+                _ => Err(Error::Message(format!(
                     "Could not save uci key: {}, {}, {}",
                     identifier,
                     result,
                     self.get_last_error()
                         .unwrap_or_else(|_| String::from("Unknown"))
-                )))
+                ))),
             }
         })
     }
@@ -355,11 +359,13 @@ impl Uci {
     ///
     /// Allowed keys are like `network.wan.proto`, `network.@interface[-1].iface`, `network.lan` and `network.@interface[-1]`
     ///
-    /// if the entry does not exist an `Err` is returned.
+    /// If the entry does not exist an `Err` with [`Error::EntryNotFound`] is returned.
     pub fn get(&mut self, key: &str) -> Result<String> {
         let ptr = libuci_locked!(self, { self.get_ptr(key)? });
         if ptr.flags & uci_ptr_UCI_LOOKUP_COMPLETE == 0 {
-            return Err(Error::Message(format!("Lookup failed: {}", key)));
+            return Err(Error::EntryNotFound {
+                entry_identifier: key.into(),
+            });
         }
         let last = unsafe { *ptr.last };
         #[allow(non_upper_case_globals)]
@@ -407,7 +413,7 @@ impl Uci {
                 );
                 Ok(String::from(typ))
             }
-            _ => return Err(Error::Message(format!("unsupported type: {}", last.type_))),
+            _ => Err(Error::Message(format!("unsupported type: {}", last.type_))),
         }
     }
 
@@ -436,14 +442,22 @@ impl Uci {
         let raw = libuci_locked!(self, {
             let raw = CString::new(identifier)?.into_raw();
             let result = unsafe { uci_lookup_ptr(self.ctx, &mut ptr, raw, true) };
-            if result != UCI_OK {
-                return Err(Error::Message(format!(
-                    "Could not parse uci key: {}, {}, {}",
-                    identifier,
-                    result,
-                    self.get_last_error()
-                        .unwrap_or_else(|_| String::from("Unknown"))
-                )));
+            match result {
+                UCI_OK => (),
+                UCI_ERR_NOTFOUND => {
+                    return Err(Error::EntryNotFound {
+                        entry_identifier: identifier.to_string(),
+                    });
+                }
+                _ => {
+                    return Err(Error::Message(format!(
+                        "Could not parse uci key: {}, {}, {}",
+                        identifier,
+                        result,
+                        self.get_last_error()
+                            .unwrap_or_else(|_| String::from("Unknown"))
+                    )));
+                }
             }
             raw
         });

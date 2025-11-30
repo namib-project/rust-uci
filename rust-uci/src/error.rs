@@ -2,47 +2,22 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::ffi::NulError;
-use std::fmt::{Debug, Display, Formatter};
-use std::option::Option::None;
+use std::fmt::Debug;
 use std::str::Utf8Error;
 
-#[derive(Debug, Clone)]
+use thiserror::Error;
+
+#[derive(Debug, Clone, Error, PartialEq)]
 pub enum Error {
+    #[error("{0}")]
     Message(String),
-    Utf8Error(Utf8Error),
-    NulError(NulError),
+    #[error("{0}")]
+    Utf8Error(#[from] Utf8Error),
+    #[error("{0}")]
+    NulError(#[from] NulError),
+    /// uci was unable to find the entry for `entry_identifier`, e.g. during `uci.get()`
+    #[error("Entry not found: {entry_identifier}")]
+    EntryNotFound { entry_identifier: String },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
-
-impl From<Utf8Error> for Error {
-    fn from(err: Utf8Error) -> Self {
-        Self::Utf8Error(err)
-    }
-}
-
-impl From<NulError> for Error {
-    fn from(err: NulError) -> Self {
-        Self::NulError(err)
-    }
-}
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Message(_) => None,
-            Error::Utf8Error(err) => Some(err),
-            Error::NulError(err) => Some(err),
-        }
-    }
-}
-
-impl Display for Error {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Error::Message(msg) => Display::fmt(msg, f),
-            Error::Utf8Error(err) => Display::fmt(err, f),
-            Error::NulError(err) => Display::fmt(err, f),
-        }
-    }
-}
