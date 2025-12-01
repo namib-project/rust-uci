@@ -635,10 +635,11 @@ mod tests {
         std::fs::write(&wireless_config_path, "").unwrap();
 
         let sections = uci.get_sections("network");
-        // todo: refactor to assert_eq, once PartialEq is implemented on Error
-        println!("{sections:?}");
-        assert!(
-            matches!(sections, Err(Error::Message(str)) if str == "Could not parse uci key: network, 3, Entry not found")
-        );
+        assert_eq!(
+            sections,
+            Err(Error::EntryNotFound {
+                entry_identifier: "network".into()
+            })
+        )
     }
 }
