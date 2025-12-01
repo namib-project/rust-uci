@@ -52,13 +52,12 @@ pub mod error;
 use core::ptr;
 use libuci_sys::{
     uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element, uci_foreach_element,
-    uci_free_context, uci_get_errorstr, uci_load, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING,
+    uci_free_context, uci_get_errorstr, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING,
     uci_package, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert, uci_save, uci_set,
     uci_set_confdir, uci_set_savedir, uci_to_section, uci_type_UCI_TYPE_OPTION,
     uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
-use std::str::FromStr;
 use std::ffi::c_int;
 use std::sync::Mutex;
 use std::{
