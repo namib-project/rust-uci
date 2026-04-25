@@ -342,18 +342,7 @@ impl Uci {
                         .unwrap_or_else(|_| String::from("Unknown"))
                 )));
             }
-            let result = unsafe { uci_save(self.ctx, ptr.p) };
-            if result == UCI_OK {
-                Ok(())
-            } else {
-                Err(Error::Message(format!(
-                    "Could not save uci key: {}, {}, {}",
-                    identifier,
-                    result,
-                    self.get_last_error()
-                        .unwrap_or_else(|_| String::from("Unknown"))
-                )))
-            }
+            self.save(&ptr)
         })
     }
 
