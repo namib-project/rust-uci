@@ -319,21 +319,9 @@ impl Uci {
                         .unwrap_or_else(|_| String::from("Unknown"))
                 )));
             }
-            let result = unsafe { uci_save(self.ctx, ptr.p) };
-            match result {
-                UCI_OK => Ok(()),
-                UCI_ERR_NOTFOUND => Err(Error::EntryNotFound {
-                    entry_identifier: identifier.to_string(),
-                }),
-                _ => Err(Error::Message(format!(
-                    "Could not save uci key: {}, {}, {}",
-                    identifier,
-                    result,
-                    self.get_last_error()
-                        .unwrap_or_else(|_| String::from("Unknown"))
-                ))),
-            }
-        })
+            self.save(&ptr)?;
+        });
+        Ok(())
     }
 
     /// Revert changes to an option, section or package
