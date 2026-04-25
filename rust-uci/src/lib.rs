@@ -54,10 +54,10 @@ pub mod error;
 
 use core::ptr;
 use libuci_sys::{
-    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element, uci_foreach_element,
-    uci_free_context, uci_get_errorstr, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING,
-    uci_package, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert, uci_save, uci_set,
-    uci_set_confdir, uci_set_savedir, uci_to_section, uci_type_UCI_TYPE_OPTION,
+    uci_add_list, uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element,
+    uci_foreach_element, uci_free_context, uci_get_errorstr, uci_lookup_ptr,
+    uci_option_type_UCI_TYPE_STRING, uci_package, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert,
+    uci_save, uci_set, uci_set_confdir, uci_set_savedir, uci_to_section, uci_type_UCI_TYPE_OPTION,
     uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
@@ -147,6 +147,19 @@ unsafe impl Send for Uci {}
 struct UciPtr {
     ptr: uci_ptr,
     _key: CString,
+}
+
+impl UciPtr {
+    /// Assert that self.ptr.value is set (non-null), returning self if the value is set.
+    fn assert_value_set(self) -> Result<Self> {
+        if self.ptr.value.is_null() {
+            return Err(Error::Message(format!(
+                "uci_ptr.value is null: {}",
+                self._key.to_string_lossy(),
+            )));
+        }
+        Ok(self)
+    }
 }
 
 impl Deref for UciPtr {
@@ -400,6 +413,68 @@ impl Uci {
                     self.get_last_error()
                         .unwrap_or_else(|_| String::from("Unknown"))
                 )))
+            }
+        })
+    }
+
+    /// Append a string to an element list in UCI. identifier and value will be concatenated to the
+    /// following assignment: `{identifier}={val}`.
+    ///
+    /// If the given option already contains a string value, it will be converted to an 1-element-list before appending the next element.
+    ///
+    /// If the addition failed an `Err` is returned.
+    pub fn add_list(&mut self, identifier: &str, val: &str) -> Result<()> {
+        if val.contains('\'') {
+            return Err(Error::Message(format!(
+                "Values may not contain quotes: {}={}",
+                identifier, val
+            )));
+        }
+        libuci_locked!(self, {
+            let assignment = format!("{}={}", identifier, val);
+            let mut ptr = self.get_ptr(identifier)?.assert_value_set()?;
+            // Safety:
+            // * self.ctx points to a valid UCI context.
+            // * ptr is valid because self.get_ptr returned Ok(ptr).
+            let result = unsafe { uci_add_list(self.ctx, ptr.deref_mut()) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not append string to element list: {}, {}, {}",
+                    assignment,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
+            }
+            self.save(&ptr)?;
+        });
+        Ok(())
+    }
+
+    /// Save change delta for the specified package referenced by `ptr`. See [Self::get_ptr].
+    ///
+    /// UCI will keep the delta changes in a temporary location until `uci_commit()` or `uci_revert()` is called.
+    /// The change delta may be applied (and flushed) by calling [Self::commit].
+    fn save(&mut self, ptr: &UciPtr) -> Result<()> {
+        let identifier = ptr._key.to_string_lossy().to_string();
+        libuci_locked!(self, {
+            // Safety:
+            // * self.ctx points to a valid UCI context.
+            // * ptr was constructed using Self::get_ptr, which guarantees that the pointer is
+            // valid.
+            let result = unsafe { uci_save(self.ctx, ptr.p) };
+            match result {
+                UCI_OK => Ok(()),
+                UCI_ERR_NOTFOUND => Err(Error::EntryNotFound {
+                    entry_identifier: identifier,
+                }),
+                _ => Err(Error::Message(format!(
+                    "Could not save uci package: {}, {}, {}",
+                    identifier,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                ))),
             }
         })
     }
