@@ -383,7 +383,8 @@ impl Uci {
             )));
         }
         libuci_locked!(self, {
-            let mut ptr = self.get_ptr(format!("{}={}", identifier, val).as_ref())?;
+            let assignment = format!("{}={}", identifier, val);
+            let mut ptr = self.get_ptr(&assignment)?;
             if ptr.value.is_null() {
                 return Err(Error::Message(format!(
                     "parsed value is null: {}={}",
@@ -401,19 +402,7 @@ impl Uci {
                         .unwrap_or_else(|_| String::from("Unknown"))
                 )));
             }
-            let result = unsafe { uci_save(self.ctx, ptr.p) };
-            if result == UCI_OK {
-                Ok(())
-            } else {
-                Err(Error::Message(format!(
-                    "Could not save uci key: {}={}, {}, {}",
-                    identifier,
-                    val,
-                    result,
-                    self.get_last_error()
-                        .unwrap_or_else(|_| String::from("Unknown"))
-                )))
-            }
+            self.save(&ptr)
         })
     }
 
