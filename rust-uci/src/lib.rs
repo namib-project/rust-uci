@@ -307,8 +307,8 @@ impl Uci {
     /// If the deletion failed an `Err` is returned.
     /// If the entry does not exist before deletion, an `Err` with [`Error::EntryNotFound`] is returned.
     pub fn delete(&mut self, identifier: &str) -> Result<()> {
-        let mut ptr = self.get_ptr(identifier)?;
         libuci_locked!(self, {
+            let mut ptr = self.get_ptr(identifier)?;
             let result = unsafe { uci_delete(self.ctx, ptr.deref_mut()) };
             if result != UCI_OK {
                 return Err(Error::Message(format!(
