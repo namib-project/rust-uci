@@ -50,6 +50,7 @@
 //!
 //! ```
 
+pub mod config;
 pub mod error;
 
 use core::ptr;
@@ -62,7 +63,6 @@ use libuci_sys::{
 };
 use log::debug;
 use std::ffi::{c_char, c_int};
-use std::sync::Mutex;
 use std::{
     ffi::{CStr, CString},
     ops::{Deref, DerefMut},
@@ -75,44 +75,56 @@ use crate::error::{Error, Result};
 const UCI_OK: c_int = libuci_sys::UCI_OK as c_int;
 const UCI_ERR_NOTFOUND: c_int = libuci_sys::UCI_ERR_NOTFOUND as c_int;
 
-// Global lock to ensure that only one instance of libuci function calls is running at the time.
-// Necessary because libuci uses thread-unsafe functions with global state (e.g., strtok).
-static LIBRARY_LOCK: Mutex<()> = Mutex::new(());
+#[macro_use]
+mod macros {
+    use std::sync::Mutex;
 
-// Ensures that the global library lock is held while evaluating `$call`.
-// The second parameter indicates whether a check for reentrancy should be performed, and requires
-// `self` to be a mutable borrow of a `Uci` instance.
-macro_rules! libuci_locked {
-    ($self:ident, $call:expr) => {{
-        // Lock global library mutex, if we aren't already holding it in a function call higher up
-        // in the stack.
-        let libuci_lock_guard = if !$self.lock_held {
-            let libuci_lock_guard = Some(
-                LIBRARY_LOCK
+    // Global lock to ensure that only one instance of libuci function calls is running at the time.
+    // Necessary because libuci uses thread-unsafe functions with global state (e.g., strtok).
+    pub static LIBRARY_LOCK: Mutex<()> = Mutex::new(());
+
+    // Ensures that the global library lock is held while evaluating `$call`.
+    // The second parameter indicates whether a check for reentrancy should be performed, and requires
+    // `self` to be a mutable borrow of a `Uci` instance.
+    #[macro_export]
+    macro_rules! libuci_locked {
+        ($self:ident, $call:expr) => {{
+            // Lock global library mutex, if we aren't already holding it in a function call higher up
+            // in the stack.
+            //
+            // todo(mraerino): This is dangerous for when $call has any code that
+            // calls `return` or uses the `?` postfix operator
+            // in those cases, the lock guard is dropped, but `$self.lock_held`
+            // is not set back to false, causing the next call to assume the lock
+            // is held when it is not
+            let libuci_lock_guard = if !$self.lock_held {
+                let libuci_lock_guard = Some(
+                    $crate::macros::LIBRARY_LOCK
+                        .lock()
+                        .expect("global libuci library lock was poisoned."),
+                );
+                $self.lock_held = true;
+                libuci_lock_guard
+            } else {
+                None
+            };
+            let result = $call;
+            // If we were the ones who locked the global library lock, release it.
+            if let Some(libuci_lock_guard) = libuci_lock_guard {
+                $self.lock_held = false;
+                drop(libuci_lock_guard);
+            }
+            result
+        }};
+        ($call:expr) => {{
+            let _libuci_lock_guard = Some(
+                $crate::macros::LIBRARY_LOCK
                     .lock()
                     .expect("global libuci library lock was poisoned."),
             );
-            $self.lock_held = true;
-            libuci_lock_guard
-        } else {
-            None
-        };
-        let result = $call;
-        // If we were the ones who locked the global library lock, release it.
-        if let Some(libuci_lock_guard) = libuci_lock_guard {
-            $self.lock_held = false;
-            drop(libuci_lock_guard);
-        }
-        result
-    }};
-    ($call:expr) => {{
-        let _libuci_lock_guard = Some(
-            LIBRARY_LOCK
-                .lock()
-                .expect("global libuci library lock was poisoned."),
-        );
-        $call
-    }};
+            $call
+        }};
+    }
 }
 
 /// Contains the native `uci_context`

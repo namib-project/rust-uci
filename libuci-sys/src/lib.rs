@@ -31,12 +31,13 @@ pub use bindings::{
     uci_commit, uci_context, uci_del_list, uci_delete, uci_delta, uci_element, uci_export,
     uci_flags, uci_free_context, uci_get_errorstr, uci_hash_options, uci_import, uci_list,
     uci_list_configs, uci_load, uci_lookup_next, uci_lookup_ptr, uci_option, uci_option_type,
-    uci_option_type_UCI_TYPE_STRING, uci_package, uci_parse_argument, uci_parse_context,
-    uci_parse_option, uci_parse_ptr, uci_parse_section, uci_perror, uci_ptr,
-    uci_ptr_UCI_LOOKUP_COMPLETE, uci_rename, uci_reorder_section, uci_revert, uci_save,
-    uci_section, uci_set, uci_set_backend, uci_set_confdir, uci_set_savedir, uci_type,
-    uci_type_UCI_TYPE_OPTION, uci_type_UCI_TYPE_SECTION, uci_unload, uci_validate_text,
-    UCI_ERR_NOTFOUND, UCI_OK,
+    uci_option_type_UCI_TYPE_LIST, uci_option_type_UCI_TYPE_STRING, uci_package,
+    uci_parse_argument, uci_parse_context, uci_parse_option, uci_parse_ptr, uci_parse_section,
+    uci_perror, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_ptr_UCI_LOOKUP_EXTENDED, uci_rename,
+    uci_reorder_section, uci_revert, uci_save, uci_section, uci_set, uci_set_backend,
+    uci_set_confdir, uci_set_savedir, uci_type, uci_type_UCI_TYPE_OPTION,
+    uci_type_UCI_TYPE_PACKAGE, uci_type_UCI_TYPE_SECTION, uci_type_UCI_TYPE_UNSPEC, uci_unload,
+    uci_validate_text, UCI_ERR_NOTFOUND, UCI_OK,
 };
 
 #[allow(clippy::ptr_offset_with_cast)]
@@ -105,6 +106,16 @@ pub unsafe fn list_to_element(ptr: *const uci_list) -> *const uci_element {
     container_of!(ptr, uci_element, list)
 }
 
+/// casts an [`uci_element`] pointer to the containing [`uci_package`].
+///
+/// # Safety
+/// The caller must ensure that `ptr` points to an element which is member of an [`uci_package`].
+/// The `ptr` must not point to an element which is not contained in an uci_package.
+pub unsafe fn uci_to_package(ptr: *const uci_element) -> *const uci_package {
+    // safety: uci_package.e has type uci_element, ptr points to uci_element
+    container_of!(ptr, uci_package, e)
+}
+
 /// casts an [`uci_element`] pointer to the containing [`uci_section`].
 ///
 /// # Safety
@@ -113,6 +124,16 @@ pub unsafe fn list_to_element(ptr: *const uci_list) -> *const uci_element {
 pub unsafe fn uci_to_section(ptr: *const uci_element) -> *const uci_section {
     // safety: uci_section.e has type uci_element, ptr points to uci_element
     container_of!(ptr, uci_section, e)
+}
+
+/// casts an [`uci_element`] pointer to the containing [`uci_option`].
+///
+/// # Safety
+/// The caller must ensure that `ptr` points to an element which is member of an [`uci_option`].
+/// The `ptr` must not point to an element which is not contained in an uci_element.
+pub unsafe fn uci_to_option(ptr: *const uci_element) -> *const uci_option {
+    // safety: uci_option.e has type uci_element, ptr points to uci_element
+    container_of!(ptr, uci_option, e)
 }
 
 /// mimics the C-macro `uci_foreach_element`
