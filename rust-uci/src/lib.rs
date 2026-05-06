@@ -54,10 +54,10 @@ pub mod error;
 
 use core::ptr;
 use libuci_sys::{
-    uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element, uci_foreach_element,
-    uci_free_context, uci_get_errorstr, uci_lookup_ptr, uci_option_type_UCI_TYPE_STRING,
-    uci_package, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert, uci_save, uci_set,
-    uci_set_confdir, uci_set_savedir, uci_to_section, uci_type_UCI_TYPE_OPTION,
+    uci_add_list, uci_alloc_context, uci_commit, uci_context, uci_delete, uci_element,
+    uci_foreach_element, uci_free_context, uci_get_errorstr, uci_lookup_ptr,
+    uci_option_type_UCI_TYPE_STRING, uci_package, uci_ptr, uci_ptr_UCI_LOOKUP_COMPLETE, uci_revert,
+    uci_save, uci_set, uci_set_confdir, uci_set_savedir, uci_to_section, uci_type_UCI_TYPE_OPTION,
     uci_type_UCI_TYPE_SECTION, uci_unload,
 };
 use log::debug;
@@ -620,6 +620,51 @@ impl Uci {
             }
         }
     }
+
+    pub fn add_list(&mut self, key: impl AsRef<str>, value: impl AsRef<str>) -> Result<()> {
+        let key = key.as_ref();
+        let value = value.as_ref();
+        if value.contains('\'') {
+            return Err(Error::Message(format!(
+                "Values may not contain quotes: {}={}",
+                key, value
+            )));
+        }
+        libuci_locked!(self, {
+            let mut ptr = self.get_ptr(&format!("{key}={value}"))?;
+            if ptr.value.is_null() {
+                return Err(Error::Message(format!(
+                    "parsed value is null: {}={}",
+                    key, value
+                )));
+            }
+            let result = unsafe { uci_add_list(self.ctx, &mut ptr.ptr) };
+            if result != UCI_OK {
+                return Err(Error::Message(format!(
+                    "Could not set uci key: {}={}, {}, {}",
+                    key,
+                    value,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )));
+            }
+            let result = unsafe { uci_save(self.ctx, ptr.p) };
+            if result == UCI_OK {
+                Ok(())
+            } else {
+                Err(Error::Message(format!(
+                    "Could not save uci key: {}={}, {}, {}",
+                    key,
+                    value,
+                    result,
+                    self.get_last_error()
+                        .unwrap_or_else(|_| String::from("Unknown"))
+                )))
+            }
+        })?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -745,11 +790,104 @@ mod tests {
             ",
         )
         .unwrap();
-
         let tz = uci.get_opt("system.@system[0].timezone").unwrap();
         assert_eq!(tz, Some("UTC".into()));
 
         let hostname = uci.get_opt("system.@system[0].hostname").unwrap();
         assert_eq!(hostname, None);
+    }
+
+    #[test]
+    fn add_list_empty() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let config_path = tmp.path().join("config/network");
+        std::fs::write(
+            &config_path,
+            "
+            config device
+                option name 'br-lan'
+                option type 'bridge'
+                option enabled '1'
+            ",
+        )
+        .unwrap();
+
+        uci.add_list("network.@device[0].ports", "bat0").unwrap();
+        uci.commit("network").unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join("config/network")).unwrap();
+        assert_eq!(
+            content,
+            "\nconfig device\n\
+            \toption name 'br-lan'\n\
+            \toption type 'bridge'\n\
+            \toption enabled '1'\n\
+            \tlist ports 'bat0'\n\
+            \n",
+        );
+    }
+
+    #[test]
+    fn add_list_to_string() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let config_path = tmp.path().join("config/network");
+        std::fs::write(
+            &config_path,
+            "
+            config device
+                option name 'br-lan'
+                option type 'bridge'
+                option ports 'lan'
+                option enabled '1'
+            ",
+        )
+        .unwrap();
+
+        uci.add_list("network.@device[0].ports", "bat0").unwrap();
+        uci.commit("network").unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join("config/network")).unwrap();
+        assert_eq!(
+            content,
+            "\nconfig device\n\
+            \toption name 'br-lan'\n\
+            \toption type 'bridge'\n\
+            \tlist ports 'lan'\n\
+            \tlist ports 'bat0'\n\
+            \toption enabled '1'\n\n",
+        );
+    }
+
+    #[test]
+    fn add_list_to_list() {
+        let (mut uci, tmp) = setup_uci().unwrap();
+        let config_path = tmp.path().join("config/network");
+        std::fs::write(
+            &config_path,
+            "
+            config device
+                option name 'br-lan'
+                option type 'bridge'
+                list ports 'lan'
+                list ports 'lan2'
+                option enabled '1'
+            ",
+        )
+        .unwrap();
+
+        uci.add_list("network.@device[0].ports", "bat0").unwrap();
+        uci.commit("network").unwrap();
+
+        let content = std::fs::read_to_string(tmp.path().join("config/network")).unwrap();
+        assert_eq!(
+            content,
+            "\nconfig device\n\
+            \toption name 'br-lan'\n\
+            \toption type 'bridge'\n\
+            \tlist ports 'lan'\n\
+            \tlist ports 'lan2'\n\
+            \tlist ports 'bat0'\n\
+            \toption enabled '1'\n\n",
+        );
     }
 }
